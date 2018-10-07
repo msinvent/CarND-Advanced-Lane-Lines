@@ -134,7 +134,7 @@ class Line():
             if ret == True:
                 # If we found corners, draw them! (just for fun)
                 cv2.drawChessboardCorners(undistordedImage, (self.nx, self.ny), corners, ret)
-                offset = 100 # offset for dst points
+                offset = 200 # offset for dst points
                 # Grab the image shape
                 img_size = (gray.shape[1], gray.shape[0])
                 
@@ -149,8 +149,9 @@ class Line():
                 # Warp the image using OpenCV warpPerspective()
                 warped = cv2.warpPerspective(undistordedImage, M, img_size)
                 cv2.imwrite(self.outputImageLocation + 'perspectiveTransformOutput_' + fname.split('/')[-1],warped)
-#                cv2.imshow(fname,warped)
-#                cv2.waitKey()
+            else:
+                cv2.imwrite(self.outputImageLocation + 'perspectiveTransformOutput_' + fname.split('/')[-1],undistordedImage)
+                
                 
                 
                 

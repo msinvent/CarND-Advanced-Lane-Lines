@@ -19,21 +19,6 @@ import matplotlib.pyplot as plt
 #    Detect lane lines 
 #    Determine the lane curvature 
 
-# Finding camera calibration matrix
-def findWarpingCoef(src,dst):
-    M = None
-    return M
-
-# Testing the output of the image warping on a test image
-def warper(img, src, dst):
-
-    # Compute and apply perpective transform
-#    img_size = (img.shape[1], img.shape[0])
-#    M = cv2.getPerspectiveTransform(src, dst)
-#    warped = cv2.warpPerspective(img, M, img_size, flags=cv2.INTER_NEAREST)  # keep same size as input image
-    warped = None
-    return warped
-
 def imageThresholding(image):
     warpedThresholdedImage = None
     return warpedThresholdedImage;
@@ -45,7 +30,9 @@ def perspectiveTrasform(image):
 
  # Define a class to receive the characteristics of each line detection
 class Line():
-    def __init__(self, imageShape = np.array([720,1280,3]) ,nx=9, ny =6, objectName = 'defaultName', calibrationImageLocation = './',outputImageLocation = './', verbosity = 0,chessBoardDimension = (9,6),  **params):
+    def __init__(self, imageShape = np.array([720,1280,3]) ,nx=9, ny =6, objectName = 'defaultName', 
+                 calibrationImageLocation = './',outputImageLocation = './', testImageLocation = './',
+                 verbosity = 0,chessBoardDimension = (9,6),  **params):
         # set the shape of input image
         self.imageShape = imageShape
         # specify an object name in case we create multiple objects
@@ -54,6 +41,8 @@ class Line():
         self.calibrationImageLocation = calibrationImageLocation
         # specify the location of output images
         self.outputImageLocation = outputImageLocation
+        # specify the location of output images
+        self.testImageLocation = testImageLocation
         # specify if the verbosity of the print statements
         self.verbosity = verbosity
         # specify the chessboard dimension
@@ -65,17 +54,16 @@ class Line():
         # Camera calibration matrix
         self.cameraMatrix = None
         self.distortionParameters = None
+        self.M = None
         
         if self.verbosity >= 1:    
             print('Initialzation of the Object "',objectName,'" which is of type "Line" is complete')
-                
+
+# function to calculate self.cameraMatrix and self.distortionParameters               
     def __undistort__(self):
         # Ref : Udacity lectures and https://opencv-python-tutroals.readthedocs.io/en/latest/py_tutorials/py_calib3d/py_calibration/py_calibration.html
         if self.verbosity == 2:
-            print('inside undistort function')
-        
-        # termination criteria
-        criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
+            print('inside __undistort__ function')
         
         # prepare object points, like (0,0,0), (1,0,0), (2,0,0) ....,(6,5,0)
         objp = np.zeros((self.nx*self.ny,3), np.float32)
@@ -112,22 +100,28 @@ class Line():
         else:
             raise ValueError('Not able to calculate the distortion error')
         
-#        for fname in imageNames:
-#            img = cv2.imread(fname)
-#            # undistort
-#            dst = cv2.undistort(img, self.cameraMatrix, self.distortionParameters, None, self.cameraMatrix)
-##            cv2.imshow('UndistortedImage',dst)
-#            break
          
-    def __perspectiveTransform__(self):
+    def __undistortImage__(self,img):
         if self.verbosity == 2:
-            print('inside perspective Transform function')
+            print('inside __undistortImage__ function')
+        return cv2.undistort(img, self.cameraMatrix, self.distortionParameters, None, self.cameraMatrix)
+
+            
+    def __updatePerspectiveTransormMatrix__(self,src,dst):
+        self.M = cv2.getPerspectiveTransform(src, dst)
+        
+    def __perspectiveTransformImage__(self,undistortedImage):
+        return cv2.warpPerspective(undistortedImage, self.M, (self.imageShape[1], self.imageShape[0]))
+        
+    def __perspectiveTranformOnChessBoard__(self):
+        if self.verbosity == 2:
+            print('inside __perspectiveTranformOnChessBoard__ function')
             
         imageNames = glob.glob(self.calibrationImageLocation + "calibration*.jpg")
         
         for fname in imageNames:
             img = cv2.imread(fname)
-            undistordedImage = cv2.undistort(img, self.cameraMatrix, self.distortionParameters, None, self.cameraMatrix)
+            undistordedImage = self.__undistortImage__(img)
             gray = cv2.cvtColor(undistordedImage, cv2.COLOR_BGR2GRAY)
             ret, corners = cv2.findChessboardCorners(gray, (self.nx, self.ny), None)
             
@@ -144,22 +138,95 @@ class Line():
                 dst = np.float32([[offset, offset], [img_size[0]-offset, offset], 
                                      [img_size[0]-offset, img_size[1]-offset], 
                                      [offset, img_size[1]-offset]])
+    
+#                print(src.shape,'\n',dst.shape)
                 # Given src and dst points, calculate the perspective transform matrix
-                M = cv2.getPerspectiveTransform(src, dst)
+#                M = cv2.getPerspectiveTransform(src, dst)
+                self.__updatePerspectiveTransormMatrix__(src,dst)
                 # Warp the image using OpenCV warpPerspective()
-                warped = cv2.warpPerspective(undistordedImage, M, img_size)
-                cv2.imwrite(self.outputImageLocation + 'perspectiveTransformOutput_' + fname.split('/')[-1],warped)
+                warpedImage = self.__perspectiveTransformImage__(undistordedImage)
+                cv2.imwrite(self.outputImageLocation + 'perspectiveTransformOutput_' + fname.split('/')[-1],warpedImage)
             else:
-                cv2.imwrite(self.outputImageLocation + 'perspectiveTransformOutput_' + fname.split('/')[-1],undistordedImage)
+                cv2.imwrite(self.outputImageLocation + 'perspectiveTransformOutput_un_' + fname.split('/')[-1],undistordedImage)
+        
+    def __perspectiveTranformOnRoad__(self):
+        if self.verbosity == 2:
+            print('inside __perspectiveTranformOnRoad__ function')
+        
+        imageNames = glob.glob(self.testImageLocation + "straight_lines*.jpg")
+
+#        (280,670)(1020,670)(585,460)(706,460)
+        for fname in imageNames:
+            img = cv2.imread(fname)
+            undistordedImage = self.__undistortImage__(img)
+#            gray = cv2.cvtColor(undistordedImage, cv2.COLOR_BGR2GRAY)
+            offset = 200
+            img_size = (img.shape[1], img.shape[0])
+            
+            src = np.array([[280,670],[525,500],[765,500],[1024,670]], np.double).reshape(4,1,2)
+            dst = np.float32([[img_size[0]-offset, offset], 
+                                     [img_size[0]-offset, img_size[1]-offset], 
+                                     [offset, img_size[1]-offset], [offset, offset]])
+
+            dst = np.float32([
+                    [offset, img_size[1]-offset],
+                    [offset, offset], 
+                    [img_size[0]-offset, offset],
+                    [img_size[0]-offset, img_size[1]-offset] 
+                    ])
+
+#            Don't delete these comments            
+#            cv2.line(undistordedImage,(280,670),(580,465),(0,255,0),4)# left ( down to up)
+#            cv2.line(undistordedImage,(710,470),(1024,670),(0,255,0),4)# right (up to down)
+    
+            self.__updatePerspectiveTransormMatrix__(np.float32(src),np.float32(dst))
+            warpedImage = self.__perspectiveTransformImage__(undistordedImage)            
+            cv2.imwrite(self.outputImageLocation + 'afterPerspectiveTransform_' + fname.split('/')[-1],warpedImage)
+    
+    def __perspectiveTranformOnRoadtest__(self):
+            if self.verbosity == 2:
+                print('inside __perspectiveTranformOnRoadtest__ function')
+            
+            imageNames = glob.glob(self.testImageLocation + "test*.jpg")    
+            for fname in imageNames:
+                img = cv2.imread(fname)
+                undistordedImage = self.__undistortImage__(img)
+                undistordedImage = img
+                warpedImage = self.__perspectiveTransformImage__(undistordedImage)            
+                cv2.imwrite(self.outputImageLocation + 'afterPerspectiveTransform_' + fname.split('/')[-1],warpedImage)
                 
+#    def __ms_perspectiveTranformOnRoadtest__(self,img):
+#            if self.verbosity == 2:
+#                print('inside __perspectiveTranformOnRoadtest__ function')
+#            
+#            imageNames = glob.glob(self.testImageLocation + "test*.jpg")    
+#            for fname in imageNames:
+#                img = cv2.imread(fname)
+#                undistordedImage = self.__undistortImage__(img)
+#                undistordedImage = img
+#                warpedImage = self.__perspectiveTransformImage__(undistordedImage)            
+#                cv2.imwrite(self.outputImageLocation + 'afterPerspectiveTransform_' + fname.split('/')[-1],warpedImage)
                 
-                
-                
+    # Define a function that thresholds the S-channel of HLS
+    # Use exclusive lower bound (>) and inclusive upper (<=)
+#    def __hls_select__(img, thresh=(0, 255)):
+#        # 1) Convert to HLS color space
+#        hls = cv2.cvtColor(img, cv2.COLOR_RGB2HLS)
+#        # 2) Apply a threshold to the S channel
+#        S = hls[:,:,2]
+#        binary_output = np.zeros_like(S)
+#        binary_output[(S > thresh[0]) & (S <= thresh[1])] = 1
+#        # 3) Return a binary image of threshold result
+#        return binary_output
+#    
+            
     def __image_pipeline__(self):
         if self.verbosity == 2:
             print('inside image pipeline')
         self.__undistort__()
-        self.__perspectiveTransform__()
+        self.__perspectiveTranformOnChessBoard__()
+        self.__perspectiveTranformOnRoad__()
+        self.__perspectiveTranformOnRoadtest__()
 #
 #        
 #        fname = 'calibration_test.png'
@@ -217,6 +284,7 @@ def main():
     print('This is the main function that will take care of the pipeline of the image processing')
     params = {'calibrationImageLocation':'../camera_cal/',
               'outputImageLocation':'../output_images/',
+              'testImageLocation':'../test_images/',
               'imageShape':np.array([720,1280,3]),
               'verbosity':2,
               'chessBoardDimension':(9,6)}

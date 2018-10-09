@@ -153,35 +153,29 @@ class Line():
         if self.verbosity == 2:
             print('inside __perspectiveTranformOnRoad__ function')
         
-        imageNames = glob.glob(self.testImageLocation + "straight_lines*.jpg")
-
-#        (280,670)(1020,670)(585,460)(706,460)
-        for fname in imageNames:
-            img = cv2.imread(fname)
-            undistordedImage = self.__undistortImage__(img)
+        fname = self.testImageLocation + "straight_lines1.jpg"
+        img = cv2.imread(fname)
+        undistortedImage = self.__undistortImage__(img)
 #            gray = cv2.cvtColor(undistordedImage, cv2.COLOR_BGR2GRAY)
-            offset = 200
-            img_size = (img.shape[1], img.shape[0])
-            
-            src = np.array([[280,670],[525,500],[765,500],[1024,670]], np.double).reshape(4,1,2)
-            dst = np.float32([[img_size[0]-offset, offset], 
-                                     [img_size[0]-offset, img_size[1]-offset], 
-                                     [offset, img_size[1]-offset], [offset, offset]])
-
-            dst = np.float32([
-                    [offset, img_size[1]-offset],
-                    [offset, offset], 
-                    [img_size[0]-offset, offset],
-                    [img_size[0]-offset, img_size[1]-offset] 
-                    ])
-
-#            Don't delete these comments            
-#            cv2.line(undistordedImage,(280,670),(580,465),(0,255,0),4)# left ( down to up)
-#            cv2.line(undistordedImage,(710,470),(1024,670),(0,255,0),4)# right (up to down)
+        offset = 300
+        img_size = (img.shape[1], img.shape[0])
+        
+        src = np.array([[205,720],[596,450],[685,450],[1100,720]], np.double).reshape(4,1,2)
     
-            self.__updatePerspectiveTransormMatrix__(np.float32(src),np.float32(dst))
-            warpedImage = self.__perspectiveTransformImage__(undistordedImage)            
-            cv2.imwrite(self.outputImageLocation + 'afterPerspectiveTransform_' + fname.split('/')[-1],warpedImage)
+        dst = np.float32([
+                [offset, img_size[1]],
+                [offset, 0], 
+                [img_size[0]-offset, 0],
+                [img_size[0]-offset, img_size[1]] 
+                ])
+
+#        Don't delete these comments            
+#        cv2.line(undistortedImage,(np.int(src[0].reshape(2,)[0]),np.int(src[0].reshape(2,)[1])),(np.int(src[1].reshape(2,)[0]),np.int(src[1].reshape(2,)[1])),(0,255,0),4)# left ( down to up)
+#        cv2.line(undistortedImage,(np.int(src[2].reshape(2,)[0]),np.int(src[2].reshape(2,)[1])),(np.int(src[3].reshape(2,)[0]),np.int(src[3].reshape(2,)[1])),(0,255,0),4)# right (up to down)
+
+        self.__updatePerspectiveTransormMatrix__(np.float32(src),np.float32(dst))
+        warpedImage = self.__perspectiveTransformImage__(undistortedImage)
+        cv2.imwrite(self.outputImageLocation + 'afterPerspectiveTransform_' + fname.split('/')[-1],warpedImage)
     
     def __perspectiveTranformOnRoadtest__(self):
             if self.verbosity == 2:
@@ -195,30 +189,34 @@ class Line():
                 warpedImage = self.__perspectiveTransformImage__(undistordedImage)            
                 cv2.imwrite(self.outputImageLocation + 'afterPerspectiveTransform_' + fname.split('/')[-1],warpedImage)
                 
-#    def __ms_perspectiveTranformOnRoadtest__(self,img):
-#            if self.verbosity == 2:
-#                print('inside __perspectiveTranformOnRoadtest__ function')
-#            
-#            imageNames = glob.glob(self.testImageLocation + "test*.jpg")    
-#            for fname in imageNames:
-#                img = cv2.imread(fname)
-#                undistordedImage = self.__undistortImage__(img)
-#                undistordedImage = img
-#                warpedImage = self.__perspectiveTransformImage__(undistordedImage)            
-#                cv2.imwrite(self.outputImageLocation + 'afterPerspectiveTransform_' + fname.split('/')[-1],warpedImage)
+    def __ms_undistortImage__(self,img):
+            if self.verbosity == 2:
+                print('inside __perspectiveTranformOnRoadtest__ function')
+            return self.__undistortImage__(img)            
+    
+    def __ms_perspectiveTranformOnRoadtest__(self,img):
+            if self.verbosity == 2:
+                print('inside __perspectiveTranformOnRoadtest__ function')
+            return self.__perspectiveTransformImage__(img)            
                 
     # Define a function that thresholds the S-channel of HLS
     # Use exclusive lower bound (>) and inclusive upper (<=)
-#    def __hls_select__(img, thresh=(0, 255)):
-#        # 1) Convert to HLS color space
-#        hls = cv2.cvtColor(img, cv2.COLOR_RGB2HLS)
-#        # 2) Apply a threshold to the S channel
-#        S = hls[:,:,2]
-#        binary_output = np.zeros_like(S)
-#        binary_output[(S > thresh[0]) & (S <= thresh[1])] = 1
-#        # 3) Return a binary image of threshold result
-#        return binary_output
-#    
+    def __hls_select__(self,img, thresh=(90, 255)):
+        # 1) Convert to HLS color space
+        hls = cv2.cvtColor(img, cv2.COLOR_BGR2HLS)
+        # 2) Apply a threshold to the S channel
+        H = hls[:,:,0]
+        L = hls[:,:,1]
+        S = hls[:,:,2]
+        binary_output = np.zeros_like(S)
+        
+        # third (L > 100) is helping in removing shadows
+        # L > 200 is helping in detecting white lines
+        binary_output[((S > thresh[0]) & (S <= thresh[1]) & (L > 60)) | (L > 200)] = 255
+        # 3) Return a binary image of threshold result
+        
+#        binary_output = L
+        return binary_output
             
     def __image_pipeline__(self):
         if self.verbosity == 2:
@@ -227,8 +225,20 @@ class Line():
         self.__perspectiveTranformOnChessBoard__()
         self.__perspectiveTranformOnRoad__()
         self.__perspectiveTranformOnRoadtest__()
-#
-#        
+
+        imageNames = glob.glob(self.testImageLocation + "test*.jpg")    
+        for fname in imageNames:
+            img = cv2.imread(fname)
+            img = self.__ms_undistortImage__(img)
+            cv2.imwrite(self.outputImageLocation + 'pipeline_002' + fname.split('/')[-1],img)
+            # need to be done before perspective transform as the image is gettng blurry in the other case and it is difficult to identify edges and colors
+            binary_threshold_image = self.__hls_select__(img)
+            cv2.imwrite(self.outputImageLocation  + 'pipeline_003' + fname.split('/')[-1],binary_threshold_image)
+            perspectiveImage = self.__perspectiveTransformImage__(binary_threshold_image)
+            cv2.imwrite(self.outputImageLocation + 'pipeline_004' + fname.split('/')[-1],perspectiveImage)
+
+
+        
 #        fname = 'calibration_test.png'
 #        img = cv2.imread(fname)
 #

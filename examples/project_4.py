@@ -7,8 +7,9 @@ Created on Sat Oct  6 20:38:20 2018
 """
 import numpy as np
 import glob, cv2
-import matplotlib.pyplot as plt
 
+import pylab
+import imageio
 
 
 #    Project Steps 
@@ -55,6 +56,10 @@ class Line():
         self.cameraMatrix = None
         self.distortionParameters = None
         self.M = None
+        self.left_fit = None
+        self.right_fit = None
+        self.left_curverad = None
+        self.right_curverad = None
         
         if self.verbosity >= 1:    
             print('Initialzation of the Object "',objectName,'" which is of type "Line" is complete')
@@ -157,7 +162,7 @@ class Line():
         img = cv2.imread(fname)
         undistortedImage = self.__undistortImage__(img)
 #            gray = cv2.cvtColor(undistordedImage, cv2.COLOR_BGR2GRAY)
-        offset = 300
+        offset = 400
         img_size = (img.shape[1], img.shape[0])
         
         src = np.array([[205,720],[596,450],[685,450],[1100,720]], np.double).reshape(4,1,2)
@@ -205,7 +210,6 @@ class Line():
         # 1) Convert to HLS color space
         hls = cv2.cvtColor(img, cv2.COLOR_BGR2HLS)
         # 2) Apply a threshold to the S channel
-        H = hls[:,:,0]
         L = hls[:,:,1]
         S = hls[:,:,2]
         binary_output = np.zeros_like(S)
@@ -214,19 +218,152 @@ class Line():
         # L > 200 is helping in detecting white lines
         binary_output[((S > thresh[0]) & (S <= thresh[1]) & (L > 60)) | (L > 200)] = 255
         # 3) Return a binary image of threshold result
-        
-#        binary_output = L
         return binary_output
+    
+    def __find_lane_pixels__(self,binary_warped):
+        # Take a histogram of the bottom half of the image
+        histogram = np.sum(binary_warped[binary_warped.shape[0]//2:,:], axis=0)
+        # Create an output image to draw on and visualize the result
+        out_img = np.dstack((binary_warped, binary_warped, binary_warped))
+        # Find the peak of the left and right halves of the histogram
+        # These will be the starting point for the left and right lines
+        midpoint = np.int(histogram.shape[0]//2)
+        leftx_base = np.argmax(histogram[:midpoint])
+        rightx_base = np.argmax(histogram[midpoint:]) + midpoint
+    
+        # HYPERPARAMETERS
+        # Choose the number of sliding windows
+        nwindows = 17
+        # Set the width of the windows +/- margin
+        margin = 110
+        # Set minimum number of pixels found to recenter window
+        minpix = 30
+    
+        # Set height of windows - based on nwindows above and image shape
+        window_height = np.int(binary_warped.shape[0]//nwindows)
+        # Identify the x and y positions of all nonzero pixels in the image
+        nonzero = binary_warped.nonzero()
+        nonzeroy = np.array(nonzero[0])
+        nonzerox = np.array(nonzero[1])
+        # Current positions to be updated later for each window in nwindows
+        leftx_current = leftx_base
+        rightx_current = rightx_base
+    
+        # Create empty lists to receive left and right lane pixel indices
+        left_lane_inds = []
+        right_lane_inds = []
+    
+        # Step through the windows one by one
+        for window in range(nwindows):
+            # Identify window boundaries in x and y (and right and left)
+            win_y_low = binary_warped.shape[0] - (window+1)*window_height
+            win_y_high = binary_warped.shape[0] - window*window_height
+            ### TO-DO: Find the four below boundaries of the window ###
+            win_xleft_low =  leftx_current - margin  # Update this
+            win_xleft_high = leftx_current + margin  # Update this
+            win_xright_low = rightx_current - margin  # Update this
+            win_xright_high = rightx_current + margin  # Update this
             
+            # Draw the windows on the visualization image
+            cv2.rectangle(out_img,(win_xleft_low,win_y_low),
+            (win_xleft_high,win_y_high),(0,255,0), 2) 
+            cv2.rectangle(out_img,(win_xright_low,win_y_low),
+            (win_xright_high,win_y_high),(0,255,0), 2) 
+            
+            ### TO-DO: Identify the nonzero pixels in x and y within the window ###
+            good_left_inds = ((nonzerox>=win_xleft_low) & (nonzerox<win_xleft_high) & 
+            (nonzeroy>=win_y_low) & (nonzeroy<win_y_high)).nonzero()[0]
+            good_right_inds = ((nonzerox>=win_xright_low) & (nonzerox<win_xright_high) &
+            (nonzeroy>=win_y_low) & (nonzeroy<win_y_high)).nonzero()[0]
+            
+    
+            # Append these indices to the lists
+            left_lane_inds.append(good_left_inds)
+            right_lane_inds.append( good_right_inds)
+            
+            if len(good_left_inds) > minpix:
+                leftx_current = np.int(np.mean(nonzerox[good_left_inds]))
+            if len(good_right_inds) > minpix:        
+                rightx_current = np.int(np.mean(nonzerox[good_right_inds]))
+    
+        # Concatenate the arrays of indices (previously was a list of lists of pixels)
+        try:
+            left_lane_inds = np.concatenate(left_lane_inds)
+            right_lane_inds = np.concatenate(right_lane_inds)
+        except ValueError:
+            # Avoids an error if the above is not implemented fully
+            pass
+    
+        # Extract left and right line pixel positions
+        leftx = nonzerox[left_lane_inds]
+        lefty = nonzeroy[left_lane_inds] 
+        rightx = nonzerox[right_lane_inds]
+        righty = nonzeroy[right_lane_inds]
+    
+        return leftx, lefty, rightx, righty, out_img
+
+    def __fit_polynomial__(self,binary_warped):
+        # Find our lane pixels first
+        leftx, lefty, rightx, righty, out_img = self.__find_lane_pixels__(binary_warped)
+    
+        # Fit a second order polynomial to each using `np.polyfit` ###
+        self.left_fit = np.polyfit(lefty, leftx, 2)
+        self.right_fit = np.polyfit(righty, rightx, 2)
+
+    
+        # Generate x and y values for plotting
+        ploty = np.linspace(0, binary_warped.shape[0]-1, binary_warped.shape[0] )
+        try:
+            left_fitx = self.left_fit[0]*ploty**2 + self.left_fit[1]*ploty + self.left_fit[2]
+            right_fitx = self.right_fit[0]*ploty**2 + self.right_fit[1]*ploty + self.right_fit[2]
+        except TypeError:
+            # Avoids an error if `left` and `right_fit` are still none or incorrect
+            print('The function failed to fit a line!')
+#            left_fitx = 1*ploty**2 + 1*ploty
+#            right_fitx = 1*ploty**2 + 1*ploty
+    
+        ## Visualization ##
+        # Colors in the left and right lane regions
+        out_img[lefty, leftx] = [255, 0, 0]
+        out_img[righty, rightx] = [0, 0, 255]
+    
+        # Plots the left and right polynomials on the lane lines
+#        plt.plot(left_fitx, ploty, color='yellow')
+#        plt.plot(right_fitx, ploty, color='yellow')
+    
+        return out_img
+    
+    def __measure_curvature_real__(self):
+        '''
+        Calculates the curvature of polynomial functions in meters.
+        '''
+        # Define conversions in x and y from pixels space to meters
+        ym_per_pix = 30/720 # meters per pixel in y dimension
+#        xm_per_pix = 3.7/700 # meters per pixel in x dimension
+        
+        # Start by generating our fake example data
+        # Make sure to feed in your real data instead in your project!
+        left_fit_cr = self.left_fit
+        right_fit_cr = self.right_fit
+        
+        # Define y-value where we want radius of curvature
+        # We'll choose the maximum sey-value, corresponding to the bottom of the image
+        y_eval = self.imageShape.shape[0]
+        
+        # Calculation of R_curve (radius of curvature)
+        self.left_curverad = ((1 + (2*left_fit_cr[0]*y_eval*ym_per_pix + left_fit_cr[1])**2)**1.5) / np.absolute(2*left_fit_cr[0])
+        self.right_curverad = ((1 + (2*right_fit_cr[0]*y_eval*ym_per_pix + right_fit_cr[1])**2)**1.5) / np.absolute(2*right_fit_cr[0])
+         
     def __image_pipeline__(self):
         if self.verbosity == 2:
-            print('inside image pipeline')
+            print('inside __image_pipeline__ pipeline')
         self.__undistort__()
         self.__perspectiveTranformOnChessBoard__()
         self.__perspectiveTranformOnRoad__()
         self.__perspectiveTranformOnRoadtest__()
 
-        imageNames = glob.glob(self.testImageLocation + "test*.jpg")    
+        imageNames = glob.glob(self.testImageLocation + "test*.jpg")  
+        
         for fname in imageNames:
             img = cv2.imread(fname)
             img = self.__ms_undistortImage__(img)
@@ -234,59 +371,37 @@ class Line():
             # need to be done before perspective transform as the image is gettng blurry in the other case and it is difficult to identify edges and colors
             binary_threshold_image = self.__hls_select__(img)
             cv2.imwrite(self.outputImageLocation  + 'pipeline_003' + fname.split('/')[-1],binary_threshold_image)
-            perspectiveImage = self.__perspectiveTransformImage__(binary_threshold_image)
-            cv2.imwrite(self.outputImageLocation + 'pipeline_004' + fname.split('/')[-1],perspectiveImage)
-
-
+            warpedImage = self.__perspectiveTransformImage__(binary_threshold_image)
+            cv2.imwrite(self.outputImageLocation + 'pipeline_004' + fname.split('/')[-1],warpedImage)
+            out_img = self.__fit_polynomial__(warpedImage)
+            cv2.imwrite(self.outputImageLocation + 'pipeline_005' + fname.split('/')[-1],out_img)
+            self.__measure_curvature_real__()
+            print(self.left_curverad,self.right_curverad)
+            
+            
+    def __video_pipeline__(self):
+        if self.verbosity == 2:
+            print('inside __video_pipeline__ pipeline')
         
-#        fname = 'calibration_test.png'
-#        img = cv2.imread(fname)
-#
-#        # Convert to grayscale
-#        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-#
-#        # Find the chessboard corners
-#        ret, corners = cv2.findChessboardCorners(gray, (nx, ny), None)
-#
-#        # If found, draw corners
-#        if ret == True:
-#            # Draw and display the corners
-#            cv2.drawChessboardCorners(img, (nx, ny), corners, ret)
-#            plt.imshow(img)
+        reader = imageio.get_reader('project_video.mp4','ffmpeg')
+        
+        for i, img in enumerate(reader):
+#            print('Mean of frame %i is %1.1f' % (i, im.mean()))
+            img = img[...,::-1]
+            img = self.__ms_undistortImage__(img)
+            binary_threshold_image = self.__hls_select__(img)
+            warpedImage = self.__perspectiveTransformImage__(binary_threshold_image)
+            out_img = self.__fit_polynomial__(warpedImage)
+            cv2.imwrite(self.outputImageLocation + 'videoframe_' + str(i) + '.jpg',out_img)
+            self.__measure_curvature_real__()
+            print(self.left_curverad,self.right_curverad)
 
-#    def __corners_unwarp__(img, mtx, dist):
-#        # Use the OpenCV undistort() function to remove distortion
-#        undist = cv2.undistort(img, mtx, dist, None, mtx)
-#        # Convert undistorted image to grayscale
-#        gray = cv2.cvtColor(undist, cv2.COLOR_BGR2GRAY)
-#        # Search for corners in the grayscaled image
-#        ret, corners = cv2.findChessboardCorners(gray, (nx, ny), None)
-#    
-#        if ret == True:
-#            # If we found corners, draw them! (just for fun)
-#            cv2.drawChessboardCorners(undist, (nx, ny), corners, ret)
-#            # Choose offset from image corners to plot detected corners
-#            # This should be chosen to present the result at the proper aspect ratio
-#            # My choice of 100 pixels is not exact, but close enough for our purpose here
-#            offset = 100 # offset for dst points
-#            # Grab the image shape
-#            img_size = (gray.shape[1], gray.shape[0])
-#    
-#            # For source points I'm grabbing the outer four detected corners
-#            src = np.float32([corners[0], corners[nx-1], corners[-1], corners[-nx]])
-#            # For destination points, I'm arbitrarily choosing some points to be
-#            # a nice fit for displaying our warped result 
-#            # again, not exact, but close enough for our purposes
-#            dst = np.float32([[offset, offset], [img_size[0]-offset, offset], 
-#                                         [img_size[0]-offset, img_size[1]-offset], 
-#                                         [offset, img_size[1]-offset]])
-#            # Given src and dst points, calculate the perspective transform matrix
-#            M = cv2.getPerspectiveTransform(src, dst)
-#            # Warp the image using OpenCV warpPerspective()
-#            warped = cv2.warpPerspective(undist, M, img_size)
-#
-#        # Return the resulting image and matrix
-#        return warped, M
+#        while image in vid.get_data():
+##            image = vid.get_data(num)
+#            fig = pylab.figure()
+#            fig.suptitle('image #{}'.format(1), fontsize=20)
+#            pylab.imshow(image)
+#        pylab.show()
 
 
 def main():
@@ -301,6 +416,7 @@ def main():
 
     createdObject = Line(objectName = 'Advanced Lane Detection Pipeline',**params)
     createdObject.__image_pipeline__();
+    createdObject.__video_pipeline__();
 
 if __name__ == "__main__":
     main()

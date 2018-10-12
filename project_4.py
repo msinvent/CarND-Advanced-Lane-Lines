@@ -3,35 +3,28 @@
 """
 Created on Sat Oct  6 20:38:20 2018
 
-@author: manish
-"""
-import numpy as np
-import glob, cv2
-import imageio
+@author: Manish Sharma
 
-
-#    Project Steps 
+#    Project Steps : 
 #    Camera calibration 
 #    Distortion correction 
 #    Color/gradient threshold 
 #    Perspective transform 
 #    Detect lane lines 
 #    Determine the lane curvature 
+"""
 
-def imageThresholding(image):
-    warpedThresholdedImage = None
-    return warpedThresholdedImage;
+import numpy as np
+import glob, cv2
+import imageio
 
-def perspectiveTrasform(image):
-    T = None
-    returnImage = image*T
-    return returnImage
-
- # Define a class to receive the characteristics of each line detection
-class Line():
+# Define a class to receive the characteristics of each line detection
+class laneDetection():
+    # laneDetection pipeline constructor
     def __init__(self, imageShape = np.array([720,1280,3]) ,nx=9, ny =6, objectName = 'defaultName', 
                  calibrationImageLocation = './',outputImageLocation = './', testImageLocation = './',
-                 verbosity = 0,chessBoardDimension = (9,6),  **params):
+                 verbosity = 0,chessBoardDimension = (9,6),
+                 nwindows = 17, margin = 110, minpix = 30, **params):
         # set the shape of input image
         self.imageShape = imageShape
         # specify an object name in case we create multiple objects
@@ -60,17 +53,31 @@ class Line():
         self.left_curverad = None
         self.right_curverad = None
         self.curvature = None
+        self.distanceFromCenter = None
+
+        # Set number of row windows to divide the image        
+        self.nwindows = nwindows
+        # Set the width of the windows +/- margin
+        self.margin = margin
+        # Set minimum number of pixels found to recenter window
+        self.minpix = minpix
+        
+        
+        ## Calculate initial cameraMatrix and distortionParameters
+        self.__undistort__()
+        self.__perspectiveTranformOnChessBoard__()
+        self.__calculatePerspectiveTranformMatrixFromRoadSample__()
+        self.__perspectiveTranformOnRoadtest__()
         
         if self.verbosity >= 1:    
             print('Initialzation of the Object "',objectName,'" which is of type "Line" is complete')
 
-# function to calculate self.cameraMatrix and self.distortionParameters               
+    # function to calculate camera matrix using distortion parameters               
     def __undistort__(self):
         # Ref : Udacity lectures and https://opencv-python-tutroals.readthedocs.io/en/latest/py_tutorials/py_calib3d/py_calibration/py_calibration.html
         if self.verbosity == 2:
             print('inside __undistort__ function')
         
-        # prepare object points, like (0,0,0), (1,0,0), (2,0,0) ....,(6,5,0)
         objp = np.zeros((self.nx*self.ny,3), np.float32)
         objp[:,:2] = np.mgrid[0:self.nx,0:self.ny].T.reshape(-1,2)
         
@@ -91,7 +98,6 @@ class Line():
             if ret == True:
                 globalRet = True
                 objpoints.append(objp)
-#                corners2 = cv2.cornerSubPix(gray,corners,(11,11),(-1,-1),criteria)
                 corners2 = corners
                 imgpoints.append(corners2)
             else:
@@ -106,22 +112,26 @@ class Line():
             raise ValueError('Not able to calculate the distortion error')
         
          
+    # This function take input image and returns undistorted image as output using camera matrix and distortion parameters calculated using
     def __undistortImage__(self,img):
         if self.verbosity == 2:
             print('inside __undistortImage__ function')
         return cv2.undistort(img, self.cameraMatrix, self.distortionParameters, None, self.cameraMatrix)
 
-            
-    def __updatePerspectiveTransormMatrix__(self,src,dst):
+    # Update projective transform matrix this need to be done once for the whole video as we are assuming flat groud model
+    def __updateCameraMatrix__(self,src,dst):
         self.M = cv2.getPerspectiveTransform(src, dst)
         self.inverseM = cv2.getPerspectiveTransform(dst,src)
         
-    def __perspectiveTransformImage__(self,undistortedImage):
+    # warp image to see it from the top view(front view) to calculate curvature
+    def __warpImage__(self,undistortedImage):
         return cv2.warpPerspective(undistortedImage, self.M, (self.imageShape[1], self.imageShape[0]))
     
+    # take the image from top view to original frame, used to reconstruct the green lane over the top of original image
     def __dewarpImage__(self,distortedImage):
         return cv2.warpPerspective(distortedImage, self.inverseM, (self.imageShape[1], self.imageShape[0]))
         
+    # uses different chessboards available to find the perspective transform
     def __perspectiveTranformOnChessBoard__(self):
         if self.verbosity == 2:
             print('inside __perspectiveTranformOnChessBoard__ function')
@@ -148,25 +158,24 @@ class Line():
                                      [img_size[0]-offset, img_size[1]-offset], 
                                      [offset, img_size[1]-offset]])
     
-#                print(src.shape,'\n',dst.shape)
                 # Given src and dst points, calculate the perspective transform matrix
-#                M = cv2.getPerspectiveTransform(src, dst)
-                self.__updatePerspectiveTransormMatrix__(src,dst)
+                self.__updateCameraMatrix__(src,dst)
                 # Warp the image using OpenCV warpPerspective()
-                warpedImage = self.__perspectiveTransformImage__(undistordedImage)
-                cv2.imwrite(self.outputImageLocation + 'perspectiveTransformOutput_' + fname.split('/')[-1],warpedImage)
+                warpedImage = self.__warpImage__(undistordedImage)
+                cv2.imwrite(self.outputImageLocation + 'warped_' + fname.split('/')[-1],warpedImage)
             else:
-                cv2.imwrite(self.outputImageLocation + 'perspectiveTransformOutput_un_' + fname.split('/')[-1],undistordedImage)
+                print('not able to find automatic chessboard corners thus not able to perform image warping, saving only undistorted image')
+                cv2.imwrite(self.outputImageLocation + 'undistorted_' + fname.split('/')[-1],undistordedImage)
         
-    def __perspectiveTranformOnRoad__(self):
+        
+    def __calculatePerspectiveTranformMatrixFromRoadSample__(self):
         if self.verbosity == 2:
             print('inside __perspectiveTranformOnRoad__ function')
         
         fname = self.testImageLocation + "straight_lines1.jpg"
         img = cv2.imread(fname)
         undistortedImage = self.__undistortImage__(img)
-#            gray = cv2.cvtColor(undistordedImage, cv2.COLOR_BGR2GRAY)
-        offset = 400
+        offset = 300
         img_size = (img.shape[1], img.shape[0])
         
         src = np.array([[205,720],[596,450],[685,450],[1100,720]], np.double).reshape(4,1,2)
@@ -178,12 +187,12 @@ class Line():
                 [img_size[0]-offset, img_size[1]] 
                 ])
 
-#        Don't delete these comments            
-#        cv2.line(undistortedImage,(np.int(src[0].reshape(2,)[0]),np.int(src[0].reshape(2,)[1])),(np.int(src[1].reshape(2,)[0]),np.int(src[1].reshape(2,)[1])),(0,255,0),4)# left ( down to up)
-#        cv2.line(undistortedImage,(np.int(src[2].reshape(2,)[0]),np.int(src[2].reshape(2,)[1])),(np.int(src[3].reshape(2,)[0]),np.int(src[3].reshape(2,)[1])),(0,255,0),4)# right (up to down)
+#        Don't delete these            
+        cv2.line(undistortedImage,(np.int(src[0].reshape(2,)[0]),np.int(src[0].reshape(2,)[1])),(np.int(src[1].reshape(2,)[0]),np.int(src[1].reshape(2,)[1])),(0,255,0),4)# left ( down to up)
+        cv2.line(undistortedImage,(np.int(src[2].reshape(2,)[0]),np.int(src[2].reshape(2,)[1])),(np.int(src[3].reshape(2,)[0]),np.int(src[3].reshape(2,)[1])),(0,255,0),4)# right (up to down)
 
-        self.__updatePerspectiveTransormMatrix__(np.float32(src),np.float32(dst))
-        warpedImage = self.__perspectiveTransformImage__(undistortedImage)
+        self.__updateCameraMatrix__(np.float32(src),np.float32(dst))
+        warpedImage = self.__warpImage__(undistortedImage)
         cv2.imwrite(self.outputImageLocation + 'afterPerspectiveTransform_' + fname.split('/')[-1],warpedImage)
     
     def __perspectiveTranformOnRoadtest__(self):
@@ -195,7 +204,7 @@ class Line():
                 img = cv2.imread(fname)
                 undistordedImage = self.__undistortImage__(img)
                 undistordedImage = img
-                warpedImage = self.__perspectiveTransformImage__(undistordedImage)            
+                warpedImage = self.__warpImage__(undistordedImage)            
                 cv2.imwrite(self.outputImageLocation + 'afterPerspectiveTransform_' + fname.split('/')[-1],warpedImage)
                 
     def __ms_undistortImage__(self,img):
@@ -206,7 +215,7 @@ class Line():
     def __ms_perspectiveTranformOnRoadtest__(self,img):
             if self.verbosity == 2:
                 print('inside __perspectiveTranformOnRoadtest__ function')
-            return self.__perspectiveTransformImage__(img)            
+            return self.__warpImage__(img)            
                 
     # Define a function that thresholds the S-channel of HLS
     # Use exclusive lower bound (>) and inclusive upper (<=)
@@ -218,30 +227,32 @@ class Line():
         S = hls[:,:,2]
         binary_output = np.zeros_like(S)
         
-        # third (L > 100) is helping in removing shadows
+        # third (L > 60) is helping in removing shadows
         # L > 200 is helping in detecting white lines
         binary_output[((S > thresh[0]) & (S <= thresh[1]) & (L > 60)) | (L > 200)] = 255
         # 3) Return a binary image of threshold result
         return binary_output
     
+    
+    # takes a binary image and return leftx, lefty, rightx, righty
     def __find_lane_pixels__(self,binary_warped):
         # Take a histogram of the bottom half of the image
         histogram = np.sum(binary_warped[binary_warped.shape[0]//2:,:], axis=0)
-        # Create an output image to draw on and visualize the result
-        out_img = np.dstack((binary_warped, binary_warped, binary_warped))
+        
         # Find the peak of the left and right halves of the histogram
         # These will be the starting point for the left and right lines
         midpoint = np.int(histogram.shape[0]//2)
         leftx_base = np.argmax(histogram[:midpoint])
         rightx_base = np.argmax(histogram[midpoint:]) + midpoint
     
+        
         # HYPERPARAMETERS
         # Choose the number of sliding windows
-        nwindows = 17
+        nwindows = self.nwindows
         # Set the width of the windows +/- margin
-        margin = 110
+        margin = self.margin
         # Set minimum number of pixels found to recenter window
-        minpix = 30
+        minpix = self.minpix
     
         # Set height of windows - based on nwindows above and image shape
         window_height = np.int(binary_warped.shape[0]//nwindows)
@@ -262,25 +273,18 @@ class Line():
             # Identify window boundaries in x and y (and right and left)
             win_y_low = binary_warped.shape[0] - (window+1)*window_height
             win_y_high = binary_warped.shape[0] - window*window_height
-            ### TO-DO: Find the four below boundaries of the window ###
+            ### Find the four below boundaries of the window ###
             win_xleft_low =  leftx_current - margin  # Update this
             win_xleft_high = leftx_current + margin  # Update this
             win_xright_low = rightx_current - margin  # Update this
             win_xright_high = rightx_current + margin  # Update this
-            
-            # Draw the windows on the visualization image
-            cv2.rectangle(out_img,(win_xleft_low,win_y_low),
-            (win_xleft_high,win_y_high),(0,255,0), 2) 
-            cv2.rectangle(out_img,(win_xright_low,win_y_low),
-            (win_xright_high,win_y_high),(0,255,0), 2) 
-            
-            ### TO-DO: Identify the nonzero pixels in x and y within the window ###
+        
+            ### Identify the nonzero pixels in x and y within the window ###
             good_left_inds = ((nonzerox>=win_xleft_low) & (nonzerox<win_xleft_high) & 
             (nonzeroy>=win_y_low) & (nonzeroy<win_y_high)).nonzero()[0]
             good_right_inds = ((nonzerox>=win_xright_low) & (nonzerox<win_xright_high) &
             (nonzeroy>=win_y_low) & (nonzeroy<win_y_high)).nonzero()[0]
             
-    
             # Append these indices to the lists
             left_lane_inds.append(good_left_inds)
             right_lane_inds.append( good_right_inds)
@@ -294,30 +298,35 @@ class Line():
         try:
             left_lane_inds = np.concatenate(left_lane_inds)
             right_lane_inds = np.concatenate(right_lane_inds)
+            
+            # Extract left and right line pixel positions
+            leftx = nonzerox[left_lane_inds]
+            lefty = nonzeroy[left_lane_inds] 
+            rightx = nonzerox[right_lane_inds]
+            righty = nonzeroy[right_lane_inds]
+            
+            self.lastValid_leftx = nonzerox[left_lane_inds]
+            self.lastValid_lefty = nonzeroy[left_lane_inds] 
+            self.lastValid_rightx = nonzerox[right_lane_inds]
+            self.lastValid_righty = nonzeroy[right_lane_inds]
         except ValueError:
-            # Avoids an error if the above is not implemented fully
-            pass
+            print('error in concatenating lane pixels using previous valid indexes')
+            return self.lastValid_leftx, self.lastValid_lefty, self.lastValid_rightx, self.lastValid_righty
     
-        # Extract left and right line pixel positions
-        leftx = nonzerox[left_lane_inds]
-        lefty = nonzeroy[left_lane_inds] 
-        rightx = nonzerox[right_lane_inds]
-        righty = nonzeroy[right_lane_inds]
-    
-        return leftx, lefty, rightx, righty, out_img
+        return leftx, lefty, rightx, righty
 
+
+    # Finds the polynomial fitting to the left and right lane corners and also the distance from the center of the lane in metre
     def __fit_polynomial__(self,binary_warped):
         # Find our lane pixels first
-        leftx, lefty, rightx, righty, out_img = self.__find_lane_pixels__(binary_warped)
-    
-        # Fit a second order polynomial to each using `np.polyfit` ###
-        self.left_fit = np.polyfit(lefty, leftx, 2)
-        self.right_fit = np.polyfit(righty, rightx, 2)
+        leftx, lefty, rightx, righty = self.__find_lane_pixels__(binary_warped)
 
-    
         # Generate x and y values for plotting
         ploty = np.linspace(0, binary_warped.shape[0]-1, binary_warped.shape[0] )
         try:
+            # Fit a second order polynomial to each using `np.polyfit` ###
+            self.left_fit = np.polyfit(lefty, leftx, 2)
+            self.right_fit = np.polyfit(righty, rightx, 2)
             left_fitx = self.left_fit[0]*ploty**2 + self.left_fit[1]*ploty + self.left_fit[2]
             right_fitx = self.right_fit[0]*ploty**2 + self.right_fit[1]*ploty + self.right_fit[2]
         except TypeError:
@@ -330,11 +339,26 @@ class Line():
 
         left_line = np.array([np.transpose(np.vstack([left_fitx,ploty]))])
         right_line = np.array([np.flipud(np.transpose(np.vstack([right_fitx,ploty])))])
+        
+        leftLanePosition = left_fitx[self.imageShape[0]-1]
+        rightLanePosition = right_fitx[self.imageShape[0]-1]
+        leftLanePosition = np.array([leftLanePosition,719,1])
+        rightLanePosition = np.array([rightLanePosition,719,1])
 
+        # finding the lane edges start point in the original frame to find the exact distance from center
+        leftLanePositionOriginal = np.matmul(self.inverseM,leftLanePosition) 
+        rightLanePositionOriginal = np.matmul(self.inverseM,rightLanePosition) 
+        leftLanePositionOriginal = leftLanePositionOriginal/leftLanePositionOriginal[2]
+        rightLanePositionOriginal = rightLanePositionOriginal/rightLanePositionOriginal[2]
+        
+        laneCenterPosition = (leftLanePositionOriginal[0] + rightLanePositionOriginal[0])/2
+        ImageCenterPosition = self.imageShape[1]/2
+        
+        mx = 3.7/700 # meters per pixel in x dimension
+        self.distanceFromCenter = (ImageCenterPosition - laneCenterPosition)*mx     
+        
         road_pnts = np.hstack((left_line,right_line))
         cv2.fillPoly(another_img,np.int_([road_pnts]),(0,255,0))
-#        cv2.imwrite('./lane_boundaries.jpg',another_img)
-    
         return another_img
     
     def __measure_curvature_real__(self):
@@ -342,84 +366,66 @@ class Line():
         Calculates the curvature of polynomial functions in meters.
         '''
         # Define conversions in x and y from pixels space to meters
-        ym_per_pix = 30/720 # meters per pixel in y dimension
-#        xm_per_pix = 3.7/700 # meters per pixel in x dimension
-        
-        # Start by generating our fake example data
-        # Make sure to feed in your real data instead in your project!
-        left_fit_cr = self.left_fit
+        my = 30/720 # meters per pixel in y dimension
+              
+        # left and right lane boundaries coefficient in hy
+        left_fit_cr = self.left_fit 
         right_fit_cr = self.right_fit
         
         # Define y-value where we want radius of curvature
         # We'll choose the maximum sey-value, corresponding to the bottom of the image
-        y_eval = self.imageShape.shape[0]
+        y_eval = self.imageShape[0] #720
         
-        # Calculation of R_curve (radius of curvature)
-        self.left_curverad = ((1 + (2*left_fit_cr[0]*y_eval*ym_per_pix + left_fit_cr[1])**2)**1.5) / np.absolute(2*left_fit_cr[0])
-        self.right_curverad = ((1 + (2*right_fit_cr[0]*y_eval*ym_per_pix + right_fit_cr[1])**2)**1.5) / np.absolute(2*right_fit_cr[0])
+        # Calculation of R_curve (radius of curvature in metres)
+        self.left_curverad = ((1 + (2*left_fit_cr[0]*y_eval*my + left_fit_cr[1])**2)**1.5) / np.absolute(2*left_fit_cr[0])
+        self.right_curverad = ((1 + (2*right_fit_cr[0]*y_eval*my + right_fit_cr[1])**2)**1.5) / np.absolute(2*right_fit_cr[0])
          
+#        print(y_eval)
+    def __pipeline__(self,img):
+        img = self.__ms_undistortImage__(img)
+        binary_threshold_image = self.__hls_select__(img)
+        warpedImage = self.__warpImage__(binary_threshold_image)
+        out_img = self.__fit_polynomial__(warpedImage)
+        self.__measure_curvature_real__()
+        # approximation of curvature of center of the lane using the curvature of left lane boundary and right lane boundary
+        self.curvature = np.int_((self.left_curverad+self.right_curverad)/2)
+        dewarpedImage = self.__dewarpImage__(out_img)
+        imageWithLane = cv2.addWeighted(np.int_(img),1,np.int_(dewarpedImage),0.4,0)
+        cv2.putText(imageWithLane,'Curvature = ' + str(self.curvature) + ' m' ,(150,100),cv2.FONT_HERSHEY_SIMPLEX,1,(255,0,0))
+        if(self.distanceFromCenter < 0):
+            cv2.putText(imageWithLane,'Car is driving ' + str(np.abs(self.distanceFromCenter)) + ' m' + ' left of lane center',(150,150),cv2.FONT_HERSHEY_SIMPLEX,1,(255,0,0))
+        else:
+            cv2.putText(imageWithLane,'Car is driving ' + str(np.abs(self.distanceFromCenter)) + ' m' + ' right of lane center',(150,150),cv2.FONT_HERSHEY_SIMPLEX,1,(255,0,0))
+        return imageWithLane
+        
     def __image_pipeline__(self):
         if self.verbosity == 2:
             print('inside __image_pipeline__ pipeline')
-        self.__undistort__()
-        self.__perspectiveTranformOnChessBoard__()
-        self.__perspectiveTranformOnRoad__()
-        self.__perspectiveTranformOnRoadtest__()
 
         imageNames = glob.glob(self.testImageLocation + "test*.jpg")  
         
         for fname in imageNames:
             img = cv2.imread(fname)
-            img = self.__ms_undistortImage__(img)
-#            cv2.imwrite(self.outputImageLocation + 'pipeline_002' + fname.split('/')[-1],img)
-            # need to be done before perspective transform as the image is gettng blurry in the other case and it is difficult to identify edges and colors
-            binary_threshold_image = self.__hls_select__(img)
-#            cv2.imwrite(self.outputImageLocation  + 'pipeline_003' + fname.split('/')[-1],binary_threshold_image)
-            warpedImage = self.__perspectiveTransformImage__(binary_threshold_image)
-#            cv2.imwrite(self.outputImageLocation + 'pipeline_004' + fname.split('/')[-1],warpedImage)
-            out_img = self.__fit_polynomial__(warpedImage)
-#            cv2.imwrite(self.outputImageLocation + 'pipeline_005' + fname.split('/')[-1],out_img)
-            self.__measure_curvature_real__()
-            self.curvature = np.int_((self.left_curverad+self.right_curverad)/2)
-            dewarpedImage = self.__dewarpImage__(out_img)
-#            cv2.imwrite(self.outputImageLocation + 'pipeline_006' + fname.split('/')[-1],dewarpedImage)
-#            print(np.zeros((self.imageShape[0],self.imageShape[1],1)).shape)
-            lane_line = cv2.addWeighted(np.int_(img),1,np.int_(dewarpedImage),0.4,0)
-            cv2.putText(lane_line,'Curvature = ' + str(self.curvature) + 'm' ,(100,100),cv2.FONT_HERSHEY_SIMPLEX,1,(255,0,0))
-            cv2.imwrite(self.outputImageLocation + 'pipeline_007' + fname.split('/')[-1],lane_line)
-
-
-            
+            imageWithLine = self.__pipeline__(img)
+            cv2.imwrite(self.outputImageLocation + 'pipeline_007' + fname.split('/')[-1],imageWithLine)
+#           
     def __video_pipeline__(self):
         if self.verbosity == 2:
             print('inside __video_pipeline__ pipeline')
         
-        reader = imageio.get_reader('project_video.mp4','ffmpeg')
-        
+        reader = imageio.get_reader('./project_video.mp4','ffmpeg')
+        fps = reader.get_meta_data()['fps']
+        writer = imageio.get_writer('./output_images/project_video_output.mp4',fps=fps)
         for i, img in enumerate(reader):
-#            print('Mean of frame %i is %1.1f' % (i, im.mean()))
-            print('Processing frame : ',i)
-            img = img[:,:,::-1]
-            img = self.__ms_undistortImage__(img)
-            binary_threshold_image = self.__hls_select__(img)
-            warpedImage = self.__perspectiveTransformImage__(binary_threshold_image)
-            out_img = self.__fit_polynomial__(warpedImage)
-            self.__measure_curvature_real__()
-            self.curvature = np.int_((self.left_curverad+self.right_curverad)/2)
-            dewarpedImage = self.__dewarpImage__(out_img)
-            lane_line = cv2.addWeighted(np.int_(img),1,np.int_(dewarpedImage),0.4,0)
-            cv2.putText(lane_line,'Curvature = ' + str(self.curvature) + ' m' ,(100,100),cv2.FONT_HERSHEY_SIMPLEX,1,(255,0,0))
-            cv2.imwrite(self.outputImageLocation + 'videoframe_' + str(i) + '.jpg',lane_line)
-
-
-
-#        while image in vid.get_data():
-##            image = vid.get_data(num)
-#            fig = pylab.figure()
-#            fig.suptitle('image #{}'.format(1), fontsize=20)
-#            pylab.imshow(image)
-#        pylab.show()
-
+            if self.verbosity >= 1 :
+                print('Processing frame : ',i)
+            imageWithLine = self.__pipeline__(img)
+            writer.append_data(imageWithLine)
+            # For debugging purposes, if you want to cut the processing short to some specific number of video frames
+#            if i == 100:
+#                break
+            
+        writer.close()
 
 def main():
     print("\033[2J")
@@ -428,10 +434,11 @@ def main():
               'outputImageLocation':'./output_images/',
               'testImageLocation':'./test_images/',
               'imageShape':np.array([720,1280,3]),
-              'verbosity':2,
+              'verbosity':1,
               'chessBoardDimension':(9,6)}
 
-    createdObject = Line(objectName = 'Advanced Lane Detection Pipeline',**params)
+    # Create the object of laneDetection class with the above parameters
+    createdObject = laneDetection(objectName = 'Advanced Lane Detection Pipeline',**params)
     createdObject.__image_pipeline__();
     createdObject.__video_pipeline__();
 

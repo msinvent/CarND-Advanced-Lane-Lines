@@ -444,7 +444,7 @@ def main():
     # Create the object of laneDetection class with the above parameters
     createdObject = laneDetection(objectName = 'Advanced Lane Detection Pipeline',**params)
     createdObject.__image_pipeline__();
-#    createdObject.__video_pipeline__();
+    createdObject.__video_pipeline__();
 
 if __name__ == "__main__":
     main()
